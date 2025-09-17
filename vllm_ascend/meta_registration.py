@@ -23,7 +23,7 @@ from torch.library import Library
 #    Do NOT perform any real computation or allocate device memory.
 #
 # 2. Register your meta function using `register_meta_if_necessary`, providing:
-#    - The namespace (usually "_C" for custom ops)
+#    - The namespace (usually "_C_ascend" for custom ops)
 #    - The operator name (as registered in C++)
 #    - The Python meta function
 #    - (Optional) The overload name, if your op has overloads
@@ -39,7 +39,7 @@ from torch.library import Library
 #
 # For more details, see: https://pytorch.org/docs/stable/notes/extending.html#meta-tensors
 
-lib = Library("_C", "IMPL")
+lib = Library("_C_ascend", "IMPL")
 
 
 def register_meta_if_necessary(ns: str, op_name: str, fn, overload: str = ""):
@@ -81,6 +81,25 @@ def get_masked_input_and_mask_meta(input: torch.Tensor,
     return masked_input, mask
 
 
-register_meta_if_necessary("_C", "rotary_embedding", rotary_embedding_meta)
-register_meta_if_necessary("_C", "get_masked_input_and_mask",
+def bgmv_expand_meta(x: torch.Tensor, weight: torch.Tensor,
+                     indices: torch.Tensor, y: torch.Tensor, slice_offset: int,
+                     slice_size: int):
+
+    y_out = torch.empty_like(y)
+    return y_out
+
+
+def sgmv_expand_meta(x: torch.Tensor, weight: torch.Tensor,
+                     lora_indices: torch.Tensor, seq_len: torch.Tensor,
+                     y: torch.Tensor, slice_offset: int, slice_size: int):
+
+    y_out = torch.empty_like(y)
+    return y_out
+
+
+register_meta_if_necessary("_C_ascend", "rotary_embedding",
+                           rotary_embedding_meta)
+register_meta_if_necessary("_C_ascend", "get_masked_input_and_mask",
                            get_masked_input_and_mask_meta)
+register_meta_if_necessary("_C_ascend", "bgmv_expand", bgmv_expand_meta)
+register_meta_if_necessary("_C_ascend", "sgmv_expand", sgmv_expand_meta)

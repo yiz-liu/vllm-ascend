@@ -9,6 +9,7 @@ from vllm_ascend.attention.attention_v1 import (AscendAttentionBackend,
                                                 AscendAttentionState,
                                                 AscendMetadata,
                                                 CommonAttentionState)
+from vllm_ascend.attention.utils import AscendCommonAttentionMetadata
 
 
 class TestAscendAttentionBackend(TestBase):
@@ -67,8 +68,13 @@ class TestAscendAttentionBackend(TestBase):
 class TestAscendAttentionMetadataBuilder(TestBase):
 
     def setUp(self):
-        self.mock_runner = MagicMock()
-        self.builder = AscendAttentionMetadataBuilder(self.mock_runner)
+        self.mock_vllm_config = MagicMock()
+        self.mock_vllm_config.model_config.max_model_len = 640
+        self.mock_vllm_config.cache_config.block_size = 64
+        self.mock_device = 'cpu:0'
+        self.builder = AscendAttentionMetadataBuilder(None, None,
+                                                      self.mock_vllm_config,
+                                                      self.mock_device)
 
     def test_reorder_batch(self):
         mock_input_batch = MagicMock()
@@ -86,31 +92,30 @@ class TestAscendAttentionMetadataBuilder(TestBase):
     def test_build_prefill_no_cache(self, mock_is_310p, mock_nd_to_nz_2d,
                                     mock_npu_format_cast,
                                     mock_ascend_metadata):
-        num_reqs = 2
-        num_actual_tokens = 10
-        max_query_len = 5
-
-        self.mock_runner.input_batch.block_table = [MagicMock()]
-        self.mock_runner.input_batch.block_table[
-            0].get_device_tensor.return_value = torch.zeros((10, 10))
-        self.mock_runner.max_num_blocks_per_req = 10
-        self.mock_runner.query_lens = torch.tensor([3, 4])
-        self.mock_runner.seq_lens_cpu = torch.tensor([5, 6])
-        self.mock_runner.slot_mapping_cpu = torch.tensor(range(20))
-        self.mock_runner.device = 'cpu:0'
-        self.mock_runner.attn_mask = torch.ones((10, 10))
-        self.mock_runner.attn_state = AscendAttentionState.PrefillNoCache
-        self.mock_runner.query_start_loc_cpu = torch.tensor([0, 3, 7])
+        common_attn_metadata = AscendCommonAttentionMetadata(
+            query_start_loc=torch.tensor([0, 3, 7]),
+            query_start_loc_cpu=torch.tensor([0, 3, 7]),
+            seq_lens_cpu=torch.tensor([5, 6]),
+            num_reqs=2,
+            num_actual_tokens=10,
+            max_query_len=5,
+            decode_token_per_req=torch.tensor([1, 1]),
+            block_table_tensor=torch.zeros((10, 10)),
+            slot_mapping_cpu=torch.tensor(range(20)),
+            actual_seq_lengths_q=torch.tensor([0, 1]),
+            positions=torch.tensor([10, 10]),
+            attn_mask=torch.ones((10, 10)),
+            spec_attn_mask=None,
+            attn_state=AscendAttentionState.PrefillNoCache,
+            num_computed_tokens_cpu=None,
+            seq_lens=None)
 
         mock_nz_tensor = MagicMock()
+        mock_model = MagicMock()
         mock_nd_to_nz_2d.return_value = mock_nz_tensor
         mock_npu_format_cast.return_value = mock_nz_tensor
 
-        self.builder.build(
-            num_reqs,
-            num_actual_tokens,
-            max_query_len,
-        )
+        self.builder.build(1, common_attn_metadata, mock_model)
 
     @patch('vllm_ascend.attention.attention_v1.AscendMetadata')
     @patch('torch_npu.npu_format_cast')
@@ -120,51 +125,57 @@ class TestAscendAttentionMetadataBuilder(TestBase):
     def test_build_chunked_prefill(self, mock_ascend_attention_state,
                                    mock_is_310p, mock_nd_to_nz_spec,
                                    mock_npu_format_cast, mock_ascend_metadata):
-        num_reqs = 3
-        num_actual_tokens = 15
-        max_query_len = 6
-
-        self.mock_runner.input_batch.block_table = [MagicMock()]
-        self.mock_runner.input_batch.block_table[
-            0].get_device_tensor.return_value = torch.zeros((10, 10))
-        self.mock_runner.max_num_blocks_per_req = 10
-        self.mock_runner.query_lens = torch.tensor([2, 3, 4])
-        self.mock_runner.seq_lens_cpu = torch.tensor([4, 5, 6])
-        self.mock_runner.slot_mapping_cpu = torch.tensor(range(20))
-        self.mock_runner.device = 'cpu:0'
-        self.mock_runner.attn_mask = torch.ones((15, 15))
-        self.mock_runner.attn_state = AscendAttentionState.ChunkedPrefill
-        self.mock_runner.query_start_loc_cpu = torch.tensor([0, 2, 5, 9])
+        common_attn_metadata = AscendCommonAttentionMetadata(
+            query_start_loc=torch.tensor([0, 2, 5, 9]),
+            query_start_loc_cpu=torch.tensor([0, 2, 5, 9]),
+            seq_lens_cpu=torch.tensor([4, 5, 6]),
+            num_reqs=3,
+            num_actual_tokens=15,
+            max_query_len=6,
+            decode_token_per_req=torch.tensor([1, 1, 1]),
+            block_table_tensor=torch.zeros((10, 10)),
+            slot_mapping_cpu=torch.tensor(range(20)),
+            actual_seq_lengths_q=torch.tensor([0, 1, 2]),
+            positions=torch.tensor([10, 10]),
+            attn_mask=torch.ones((15, 15)),
+            spec_attn_mask=None,
+            attn_state=AscendAttentionState.ChunkedPrefill,
+            num_computed_tokens_cpu=None,
+            seq_lens=None)
 
         mock_ascend_attention_state = MagicMock()
         mock_ascend_attention_state.PrefillNoCache = 0
 
         mock_nz_tensor = MagicMock()
+        mock_model = MagicMock()
         mock_nd_to_nz_spec.return_value = mock_nz_tensor
         mock_npu_format_cast.return_value = mock_nz_tensor
 
-        self.builder.build(num_reqs, num_actual_tokens, max_query_len)
+        self.builder.build(1, common_attn_metadata, mock_model)
 
     @patch('vllm_ascend.attention.attention_v1.AscendMetadata')
     @patch('vllm_ascend.attention.attention_v1.is_310p', return_value=False)
     def test_build_non_310p(self, mock_is_310p, mock_ascend_metadata):
-        num_reqs = 3
-        num_actual_tokens = 15
-        max_query_len = 6
+        common_attn_metadata = AscendCommonAttentionMetadata(
+            query_start_loc=torch.tensor([0, 2, 5, 9]),
+            query_start_loc_cpu=torch.tensor([0, 2, 5, 9]),
+            seq_lens_cpu=torch.tensor([4, 5, 6]),
+            num_reqs=3,
+            num_actual_tokens=15,
+            max_query_len=6,
+            decode_token_per_req=torch.tensor([1, 1, 1]),
+            block_table_tensor=torch.zeros((10, 10)),
+            slot_mapping_cpu=torch.tensor(range(20)),
+            actual_seq_lengths_q=torch.tensor([0, 1, 2]),
+            positions=torch.tensor([10, 10]),
+            attn_mask=torch.ones((15, 15)),
+            spec_attn_mask=None,
+            attn_state=AscendAttentionState.ChunkedPrefill,
+            num_computed_tokens_cpu=None,
+            seq_lens=None)
+        mock_model = MagicMock()
 
-        self.mock_runner.input_batch.block_table = [MagicMock()]
-        self.mock_runner.input_batch.block_table[
-            0].get_device_tensor.return_value = torch.zeros((10, 10))
-        self.mock_runner.max_num_blocks_per_req = 10
-        self.mock_runner.query_lens = torch.tensor([2, 3, 4])
-        self.mock_runner.seq_lens_cpu = torch.tensor([4, 5, 6])
-        self.mock_runner.slot_mapping_cpu = torch.tensor(range(20))
-        self.mock_runner.device = 'cpu:0'
-        self.mock_runner.attn_mask = torch.ones((15, 15))
-        self.mock_runner.attn_state = AscendAttentionState.ChunkedPrefill
-        self.mock_runner.query_start_loc_cpu = torch.tensor([0, 2, 5, 9])
-
-        self.builder.build(num_reqs, num_actual_tokens, max_query_len)
+        self.builder.build(1, common_attn_metadata, mock_model)
 
 
 class TestAscendAttentionBackendImpl(TestBase):
@@ -222,6 +233,18 @@ class TestAscendAttentionBackendImpl(TestBase):
             kv_cache_dtype="float16",
             logits_soft_cap=None,
             attn_type=None,
+            kv_sharing_target_layer_name=None)
+
+        self.impl_swa = AscendAttentionBackendImpl(
+            num_heads=8,
+            head_size=64,
+            scale=1.0,
+            num_kv_heads=8,
+            alibi_slopes=None,
+            sliding_window=1024,
+            kv_cache_dtype="float16",
+            logits_soft_cap=None,
+            attn_type=self.attention_type.DECODER,
             kv_sharing_target_layer_name=None)
 
     @patch('torch.ops.vllm.unified_ascend_attention_with_output')
@@ -381,6 +404,35 @@ class TestAscendAttentionBackendImpl(TestBase):
                                    trace_flag=False)
 
         mock_paged_attention.assert_called_once()
+        assert output.shape == (10, 8 * 64)
+
+    @patch('torch_npu._npu_reshape_and_cache')
+    @patch('torch_npu.npu_fused_infer_attention_score')
+    def test_forward_decode_only_swa(self, mock_fused_infer_attention_score,
+                                     mock_npu_reshape_and_cache):
+        """Test forward pass in DecodeOnly state"""
+        query = torch.randn(10, 8 * 64)
+        key = torch.randn(10, 8 * 64)
+        value = torch.randn(10, 8 * 64)
+        kv_cache = torch.empty(2, 5, 128, 8, 64)
+        metadata = self.attn_metadata
+        metadata.attn_state = AscendAttentionState.DecodeOnly
+        metadata.seq_lens = torch.tensor([10] * 10)
+        metadata.block_tables = torch.zeros(1, 5, dtype=torch.long)
+        metadata.num_actual_tokens = 100
+        metadata.slot_mapping = torch.zeros(10, dtype=torch.long)
+        layer = self.layer_no_quant
+        mock_fused_infer_attention_score.return_value = (torch.ones(10, 8,
+                                                                    64), 1)
+        output = self.impl_swa.forward(layer,
+                                       query,
+                                       key,
+                                       value,
+                                       kv_cache,
+                                       metadata,
+                                       trace_flag=False)
+        print(output.shape)
+        mock_fused_infer_attention_score.assert_called_once()
         assert output.shape == (10, 8 * 64)
 
     @patch('vllm_ascend.attention.attention_v1.is_310p', return_value=False)

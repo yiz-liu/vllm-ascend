@@ -40,7 +40,7 @@ std::tuple<at::Tensor, at::Tensor> rotary_embedding_meta(
   at::Tensor &positions,
   at::Tensor &query,
   at::Tensor &key,
-  int64_t head_size, 
+  int64_t head_size,
   at::Tensor &cos_sin_cache,
   bool is_neox) {
     auto num_tokens = positions.sym_numel();
@@ -69,18 +69,34 @@ std::tuple<at::Tensor, at::Tensor> get_masked_input_and_mask_meta(
     return {masked_input, mask};
 }
 
+at::Tensor bgmv_expand_meta(at::Tensor &x, at::Tensor &weight, at::Tensor &indices, at::Tensor &y,
+                       int64_t slice_offset, int64_t slice_size) {
+    at::Tensor y_out = at::empty_like(y);
+    return y_out;
+}
+
+at::Tensor sgmv_expand_meta(at::Tensor &x, at::Tensor &weight, at::Tensor &lora_indices, at::Tensor &seq_len,
+                       at::Tensor &y, int64_t slice_offset, int64_t slice_size) {
+    at::Tensor y_out = at::empty_like(y);
+    return y_out;
+}
+
 
 } // namespace meta
 } // namespace vllm_ascend
 
 namespace {
-  // Register the meta implementations of the custom kernels for symbolic tracing, this will also 
+  // Register the meta implementations of the custom kernels for symbolic tracing, this will also
   // the custom kernel been captured into aclgraph
-  TORCH_LIBRARY_IMPL_EXPAND(_C, Meta, ops) {
+  TORCH_LIBRARY_IMPL_EXPAND(CONCAT(_C, _ascend), Meta, ops) {
     // Rotary embedding meta implementation
     ops.impl("rotary_embedding", &vllm_ascend::meta::rotary_embedding_meta);
     // Masked input and mask meta implementation
     ops.impl("get_masked_input_and_mask", &vllm_ascend::meta::get_masked_input_and_mask_meta);
+    // Bgmv expand
+    ops.impl("bgmv_expand", &vllm_ascend::meta::bgmv_expand_meta);
+    // Sgmv expand
+    ops.impl("sgmv_expand", &vllm_ascend::meta::sgmv_expand_meta);
 
 }
 }
