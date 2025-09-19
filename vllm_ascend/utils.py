@@ -22,6 +22,7 @@ import functools
 import math
 import os
 from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import Enum
 from threading import Lock
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
@@ -617,3 +618,34 @@ def weak_ref_tensors(
     if isinstance(tensors, tuple):
         return tuple(weak_ref_tensor(t) for t in tensors)
     raise ValueError("Invalid type for tensors")
+
+
+@dataclass
+class GraphParams:
+    events: dict[int, list[torch.npu.ExternalEvent]]
+    workspaces: dict[int, torch.Tensor]
+    handles: dict[int, list[torch_npu._C._NPUTaskGroupHandle]]
+    attn_params: dict[int, list[tuple]]
+
+
+_graph_params: Optional[GraphParams] = None
+
+
+def set_graph_params(aclgraph_capture_sizes: set[int]):
+    global _graph_params
+    if _graph_params is not None:
+        raise ValueError("Graph parameters have already been set!")
+    _graph_params = GraphParams(
+        {size: []
+         for size in aclgraph_capture_sizes},
+        {size: None
+         for size in aclgraph_capture_sizes},
+        {size: []
+         for size in aclgraph_capture_sizes},
+        {size: []
+         for size in aclgraph_capture_sizes},
+    )
+
+
+def get_graph_params():
+    return _graph_params
