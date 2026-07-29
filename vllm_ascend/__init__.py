@@ -15,6 +15,10 @@
 # This file is a part of the vllm-ascend project.
 #
 
+import os
+
+from vllm.logger import logger
+
 _GLOBAL_PATCH_APPLIED = False
 
 
@@ -38,6 +42,16 @@ def _ensure_global_patch():
 def register():
     """Register the NPU platform."""
 
+    # Upstream auto-enables breakable CUDAGraph for selected architectures
+    # only when the environment variable is absent. Keep it opt-in on Ascend
+    # while preserving any value explicitly set by users.
+    value = os.environ.setdefault("VLLM_USE_BREAKABLE_CUDAGRAPH", "0")
+    logger.info_once(
+        "Breakable CUDAGraph on Ascend is opt-in; using "
+        "VLLM_USE_BREAKABLE_CUDAGRAPH=%s.",
+        value,
+        scope="process",
+    )
     return "vllm_ascend.platform.NPUPlatform"
 
 
