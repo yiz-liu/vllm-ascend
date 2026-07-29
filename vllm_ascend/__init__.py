@@ -17,7 +17,7 @@
 
 import os
 
-from vllm.logger import logger
+from vllm.logger import logger as vllm_logger
 
 _GLOBAL_PATCH_APPLIED = False
 
@@ -46,9 +46,8 @@ def register():
     # only when the environment variable is absent. Keep it opt-in on Ascend
     # while preserving any value explicitly set by users.
     value = os.environ.setdefault("VLLM_USE_BREAKABLE_CUDAGRAPH", "0")
-    logger.info_once(
-        "Breakable CUDAGraph on Ascend is opt-in; using "
-        "VLLM_USE_BREAKABLE_CUDAGRAPH=%s.",
+    vllm_logger.info_once(
+        "Breakable CUDAGraph on Ascend is opt-in; using VLLM_USE_BREAKABLE_CUDAGRAPH=%s.",
         value,
         scope="process",
     )
