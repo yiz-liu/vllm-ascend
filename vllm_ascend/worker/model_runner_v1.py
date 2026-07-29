@@ -121,6 +121,7 @@ from vllm_ascend.compilation.acl_graph import (
     set_graph_params,
     update_full_graph_params,
 )
+from vllm_ascend.compilation.breakable_aclgraph import BreakableACLGraphWrapper, is_breakable_aclgraph_enabled
 from vllm_ascend.distributed.utils import get_decode_context_model_parallel_world_size
 from vllm_ascend.eplb.adaptor.vllm_adaptor import VllmEplbAdaptor
 from vllm_ascend.eplb.core.eplb_device_transfer_loader import D2DExpertWeightLoader
@@ -536,6 +537,8 @@ class NPUModelRunner(GPUModelRunner):
         self.sampling_done_event: torch.npu.Event | None = None
         self.valid_sampled_token_count_gpu: torch.Tensor | None = None
 
+        self.update_stream: torch.npu.Stream | None = None
+
         # self.cudagraph_batch_sizes sorts in ascending order.
         if (
             self.compilation_config.cudagraph_capture_sizes
@@ -547,6 +550,7 @@ class NPUModelRunner(GPUModelRunner):
         self.mamba_state_idx: dict[str, int] = {}
         self._mamba_bufs: Any | None = None
         self._mamba_copy_bufs: Any | None = None
+
     @property
     def use_dcp(self) -> bool:
         return self.dcp_size > 1
@@ -628,7 +632,8 @@ class NPUModelRunner(GPUModelRunner):
     def _use_aclgraph(self) -> bool:
         return (
             self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE
-            and self.compilation_config.mode == CompilationMode.VLLM_COMPILE
+            and (self.compilation_config.mode == CompilationMode.VLLM_COMPILE
+            or is_breakable_aclgraph_enabled())
             and not self.model_config.enforce_eager
         )
 
@@ -674,7 +679,7 @@ class NPUModelRunner(GPUModelRunner):
 
     def get_model(self) -> nn.Module:
         # get raw model out of the aclgraph wrapper.
-        if isinstance(self.model, ACLGraphWrapper):
+        if isinstance(self.model, (ACLGraphWrapper, BreakableACLGraphWrapper)):
             return self.model.unwrap()
         return self.model
 
@@ -3527,8 +3532,31 @@ class NPUModelRunner(GPUModelRunner):
         ) # type: bool
         
         # wrap the model with full graph wrapper if needed.
-        if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
-            self.update_stream: torch.npu.Stream = torch.npu.Stream()
+        cudagraph_mode = self.compilation_config.cudagraph_mode
+        assert cudagraph_mode is not None
+
+        if cudagraph_mode.has_full_cudagraphs():
+            self.update_stream = torch.npu.Stream()
+
+        if (
+            is_breakable_aclgraph_enabled()
+            and cudagraph_mode != CUDAGraphMode.NONE
+        ):
+            self.model = BreakableACLGraphWrapper(
+                self.model,
+                self.vllm_config,
+                use_eagle=self.use_eagle,
+                enable_enpu=self.enable_enpu,
+            )
+            drafter = getattr(self, "drafter", None)
+            if drafter is not None and hasattr(drafter, "model"):
+                drafter.model = BreakableACLGraphWrapper(
+                    drafter.model,
+                    self.vllm_config,
+                    use_eagle=self.use_eagle,
+                    enable_enpu=self.enable_enpu,
+                )
+        elif cudagraph_mode.has_full_cudagraphs():
             self.model = ACLGraphWrapper(
                 self.model,
                 self.vllm_config,
@@ -4720,7 +4748,7 @@ class NPUModelRunner(GPUModelRunner):
             cuda_graph_size = GPUModelRunner.capture_model(self)
 
         mgr = self.encoder_cudagraph_manager
-        if mgr is not None and hasattr(self, "update_stream"):
+        if mgr is not None and self.update_stream is not None:
             mgr.update_stream = self.update_stream
 
         return cuda_graph_size
