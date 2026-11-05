@@ -209,6 +209,38 @@ vllm serve Qwen/Qwen2-7B-Instruct \
   --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":true, "enable_static_kernel":true}}'
 ```
 
+#### Static kernels with Breakable ACLGraph
+
+Model Runner V2 can prepare static kernels during graph warmup without running
+the model compilation backend:
+
+```bash
+VLLM_USE_V2_MODEL_RUNNER=1 VLLM_USE_BREAKABLE_CUDAGRAPH=1 \
+vllm serve /path/to/model \
+  --compilation-config '{"cudagraph_mode":"FULL_AND_PIECEWISE"}' \
+  --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":false,"enable_static_kernel":true,"enable_super_kernel":true}}'
+```
+
+Each target or draft capture descriptor runs one eager warmup through the
+torch_npu static-kernel helper, then captures its graph. Eager-only models and
+eager draft models have no separate collection step. Graph-enabled drafts use
+their own capture schedule.
+
+Ascend installs worker-side runtime patches for capture warmup and segment
+finalization; no changes to the upstream vLLM files are required. This path uses
+the existing torch_npu callable helper and requires isolated static-kernel
+installation support (CANN 9.1 or newer with the corresponding torch_npu API).
+It currently requires PP=1 and matching
+target/draft TP sizes when the draft uses graphs.
+
+Compiled packages are cached under
+`$VLLM_CACHE_ROOT/ascend_static_kernel/<torch_npu version>`. The helper also checks
+CANN version, device type, operator descriptions, SuperKernel options, and
+deterministic mode. After changing custom operator implementations, remove this
+cache before restarting, or use `VLLM_DISABLE_COMPILE_CACHE=1` to rebuild.
+Each worker releases its graphs before the node's installation owner removes
+the instance's installed packages. The build cache remains available for reuse.
+
 #### Verifying static kernel is active
 
 The recommended way to verify static kernel is in effect is through **Ascend Profiling**:
@@ -229,11 +261,15 @@ This confirms that compilation has been triggered. The absence of this message m
 
 [Super Kernel](https://www.hiascend.com/document/detail/en/Pytorch/latest/devguide/TorchAir/docs/en/npugraph_ex/advanced/superkernel.md) is an **optional** operator-binary fusion optimization. Unlike source-level fusion, it works on compiled kernel binaries: eligible subgraphs are identified, their child kernels are combined into a larger kernel, and synchronization is inserted according to graph dependencies. Compared with launching operators individually, this can reduce task scheduling waits, launch overhead, and operator-head overhead.
 
-In vLLM Ascend, Super Kernel optimization is applied during ACLGraph capture. It depends on both static kernel and Npugraph_ex:
+In vLLM Ascend, Super Kernel optimization is applied during ACLGraph capture. It requires static kernels and graph capture:
 
 ```text
-Super Kernel -> static kernel -> Npugraph_ex
+Super Kernel -> static kernels + ACLGraph capture
 ```
+
+The existing compiled path prepares static kernels through Npugraph_ex. The
+Breakable path prepares them during GraphManager warmup and applies SuperKernel
+optimization to each captured graph segment.
 
 !!! note
 

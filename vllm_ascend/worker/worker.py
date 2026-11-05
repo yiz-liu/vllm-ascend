@@ -47,7 +47,7 @@ from vllm.distributed.kv_transfer import (
     has_kv_transfer_group,
 )
 from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorHandshakeMetadata
-from vllm.distributed.parallel_state import Handle, get_pp_group, get_tp_group
+from vllm.distributed.parallel_state import Handle, get_pp_group, get_tp_group, get_world_group
 from vllm.logger import logger
 from vllm.lora.request import LoRARequest
 from vllm.platforms import current_platform
@@ -116,6 +116,7 @@ from vllm_ascend.utils import (
     setup_ascend_local_comm_res,
     vllm_version_is,
 )
+from vllm_ascend.worker.static_kernel import initialize_static_kernel_runtime, release_static_kernels
 
 # vLLM #61183 moved the planning helpers on main; v0.32.0 keeps them
 # in kv_cache_utils, so importing the main-only module breaks worker startup.
@@ -240,6 +241,7 @@ class NPUWorker(WorkerBase):
             WEIGHT_LOADER_V2_SUPPORTED.remove("UnquantizedLinearMethod")
 
         self.use_v2_model_runner = self.vllm_config.use_v2_model_runner
+        self._static_kernel_runtime_initialized = False
         self._kvpp_cache_allocation_plan: KVPPPhysicalCachePlan | None = None
         self._pp_send_work: list[Handle] = []
 
@@ -467,6 +469,11 @@ class NPUWorker(WorkerBase):
             shutdown_fn = getattr(model_runner, "shutdown", None)
             if callable(shutdown_fn):
                 shutdown_fn()
+        if self._static_kernel_runtime_initialized:
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier(group=get_world_group().cpu_group)
+            release_static_kernels()
+            self._static_kernel_runtime_initialized = False
 
     def initialize_cache(self, num_gpu_blocks: int, num_cpu_blocks: int) -> None:
         self.cache_config.num_gpu_blocks = num_gpu_blocks
@@ -606,6 +613,10 @@ class NPUWorker(WorkerBase):
                 from vllm_ascend.worker.v2.model_runner import NPUModelRunner as NPUModelRunnerV2
 
                 self.model_runner = NPUModelRunnerV2(self.vllm_config, self.device)
+                compilation = get_ascend_config().ascend_compilation_config
+                if compilation.enable_static_kernel and not compilation.enable_npugraph_ex:
+                    initialize_static_kernel_runtime(self.vllm_config, capture=True)
+                    self._static_kernel_runtime_initialized = True
         else:
             self.model_runner = NPUModelRunner(self.vllm_config, self.device)
 

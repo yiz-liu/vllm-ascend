@@ -118,7 +118,7 @@ class AscendCompilationConfig:
 
     Migrated to ``@config`` (pydantic dataclass). Hardware-profile runtime
     downgrades (disable npugraph_ex / static_kernel / super_kernel) and the
-    super_kernel→static_kernel→npugraph_ex dependency checks are applied in
+    super_kernel→static_kernel dependency checks are applied in
     an ``after`` model_validator.
     """
 
@@ -165,8 +165,6 @@ class AscendCompilationConfig:
             self.enable_npugraph_ex = False
             self.enable_static_kernel = False
             self.enable_super_kernel = False
-        if self.enable_static_kernel:
-            assert self.enable_npugraph_ex, "Static kernel generation requires npugraph_ex to be enabled."
         if self.enable_super_kernel:
             assert self.enable_static_kernel, "Super kernel generation requires static kernel to be enabled."
         return self
