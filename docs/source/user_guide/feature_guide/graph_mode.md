@@ -222,6 +222,8 @@ Breakable selects `CompilationMode.NONE` and disables npugraph_ex. For each capt
 
 This path requires CANN 9.1 or newer and a torch_npu version with isolated static-kernel installation support. Use PP=1 and matching target/draft TP sizes when the draft uses graphs.
 
+With data parallelism, graph warmup requires the complete DP worker world and equal-sized, contiguous rank blocks on each host. For example, a DP4×TP16 deployment with one DP replica per host uses blocks 0–15, 16–31, 32–47, and 48–63. The worker checks the detected placement at startup. If you set `LOCAL_WORLD_SIZE`, it must match the detected block size on each worker.
+
 When using static kernel compilation during graph warmup, keep graph memory profiling disabled. Profiling uses the same warmup path for temporary graphs and can trigger kernel compilation and installation.
 
 Both compilation paths use the torch_npu helper's default `./static_kernel_compile_outputs/` directory, relative to the worker's current working directory. Cache reuse depends on the CANN version, device type, operator descriptions, SuperKernel options, and deterministic mode. After changing torch_npu or custom operator implementations, clear this cache before restarting or rebuild with `VLLM_DISABLE_COMPILE_CACHE=1`.
